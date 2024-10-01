@@ -147,7 +147,9 @@ class LMDBStorageHandler(StorageHandler):
 
             txn.replace(self._serialize(feed.id), self._serialize(entries))
 
-    def get_entries(self, feed: Feed = None) -> Mapping[str, FeedEntry | str]:
+    def get_entries(
+        self, feed: Feed = None, after: int = 0
+    ) -> Mapping[str, FeedEntry | str]:
         entries = []
 
         if feed:
@@ -169,13 +171,14 @@ class LMDBStorageHandler(StorageHandler):
         for entry in entries if entries else []:
             k, v = entry
             feed_entry = FeedEntry(**self._deserialize(v))
-            out.append(
-                {
-                    "entry": feed_entry,
-                    "feed_id": feed_entry.feed_id,
-                    "id": self._deserialize(k),
-                }
-            )
+            if feed_entry.published_at > after:
+                out.append(
+                    {
+                        "entry": feed_entry,
+                        "feed_id": feed_entry.feed_id,
+                        "id": self._deserialize(k),
+                    }
+                )
 
         return out
 
@@ -303,3 +306,33 @@ class LMDBStorageHandler(StorageHandler):
         self.upsert_handler(settings.notification_handler)
         self.upsert_handler(settings.summarization_handler)
         self.upsert_handler(settings.content_retrieval_handler)
+
+    def delete_feed(self, feed: Feed) -> None:
+
+        with self.db.begin(db=self._db(Named.feed), write=True) as txn:
+            txn.delete(self._serialize(feed.id))
+
+        with self.db.begin(db=self._db(Named.si_feed_entry), write=True) as txn:
+            txn.delete(self._serialize(feed.id))
+
+        with self.db.begin(db=self._db(Named.poll), write=True) as txn:
+            txn.delete(self._serialize(feed.id))
+
+        with self.db.begin(db=self._db(Named.feed_start), write=True) as txn:
+            txn.delete(self._serialize(feed.id))
+
+    def delete_feed_entry(self, feed_entry: FeedEntry) -> None:
+
+        with self.db.begin(db=self._db(Named.entry_content), write=True) as txn:
+            txn.delete(self._serialize(feed_entry.id))
+
+        with self.db.begin(db=self._db(Named.entry), write=True) as txn:
+            txn.delete(self._serialize(feed_entry.id))
+
+        with self.db.begin(db=self._db(Named.si_feed_entry), write=True) as txn:
+            value = txn.get(self._serialize(feed_entry.feed_id))
+
+            entries: List[str] = self._deserialize(value)
+            entries.remove(feed_entry.id)
+
+            txn.replace(self._serialize(feed_entry.feed_id), self._serialize(entries))

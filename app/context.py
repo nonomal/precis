@@ -5,11 +5,9 @@ from enum import Enum
 from logging import getLogger
 from typing import Any, List, Mapping, Optional, Type
 
-from html2text import HTML2Text
 from markdown2 import markdown
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 from readabilipy import simple_json_from_html_string
-from readability import Document
 
 from app.content import content_retrieval_handlers
 from app.handlers import (
@@ -49,10 +47,11 @@ class GlobalSettings(BaseModel):
     notification_handler_key: str = "null_notification"
     summarization_handler_key: str = "null_summarization"
     content_retrieval_handler_key: str = "playwright"
+    recent_hours: int = 36
 
     finished_onboarding: bool = False
 
-    db: Any
+    db: Any = Field(exclude=True)
 
     @validator("db")
     def validate_db(cls, val):
@@ -185,11 +184,15 @@ class StorageHandler(ABC):
         pass
 
     @abstractmethod
-    def get_entries(self, feed: Feed) -> List[Mapping[str, str]]:
+    def get_entries(
+        self, feed: Feed = None, after: int = 0
+    ) -> List[Mapping[str, FeedEntry]]:
         """
         Given a feed, retrieve the entries for that feed and return a list of
         dicts, where each dict has key entry = FeedEntry object, feed_id = the
-        id of the feed for which the entry exists, and id = the entry ID.
+        id of the feed for which the entry exists, and id = the entry ID. If no
+        feed is specified return entries for all feeds. Optionally, only return
+        entries after a certain epoch timestamp.
         """
         pass
 
@@ -272,21 +275,29 @@ class StorageHandler(ABC):
         """
         pass
 
+    @abstractmethod
+    def delete_feed(self, feed: Feed) -> None:
+        """
+        Given a feed, delete the feed from the database.
+        """
+        pass
+
+    @abstractmethod
+    def delete_feed_entry(self, feed_entry: FeedEntry) -> None:
+        """
+        Given a feed entry, delete the entry from the database.
+        """
+        pass
+
     @staticmethod
     async def get_entry_html(url: str, settings: GlobalSettings) -> str:
         return await settings.content_retrieval_handler.get_content(url)
 
     @staticmethod
     def get_main_content(content: str) -> str:
-        md = simple_json_from_html_string(html=content)
+        md = simple_json_from_html_string(html=content, use_readability=True)
 
-        cleaned_document = Document(input=md["content"])
-
-        converter = HTML2Text()
-        converter.ignore_images = True
-        converter.ignore_links = True
-
-        return markdown(converter.handle(cleaned_document.summary(html_partial=True)))
+        return md["plain_content"]
 
     @staticmethod
     def summarize(

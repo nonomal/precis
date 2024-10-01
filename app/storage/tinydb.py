@@ -98,7 +98,7 @@ class TinyDBStorageHandler(StorageHandler):
         query = Query().id.matches(entry.id)
         table.upsert(row, cond=query)
 
-    def get_entries(self, feed: Feed = None):
+    def get_entries(self, feed: Feed = None, after: int = 0):
         table = self.db.table("entries")
 
         if feed:
@@ -110,6 +110,7 @@ class TinyDBStorageHandler(StorageHandler):
         return [
             {"entry": FeedEntry(**i["entry"]), "feed_id": i["feed_id"], "id": i["id"]}
             for i in entries
+            if i["entry"]["published_at"] > after
         ]
 
     def get_feed_entry(self, id: str):
@@ -247,3 +248,22 @@ class TinyDBStorageHandler(StorageHandler):
         self.upsert_handler(settings.notification_handler)
         self.upsert_handler(settings.summarization_handler)
         self.upsert_handler(settings.content_retrieval_handler)
+
+    def delete_feed(self, feed: Feed) -> None:
+        feeds = self.db.table("feeds")
+        query = Query().id.matches(feed.id)
+        feeds.remove(query)
+
+        feed_start = self.db.table("feed_start")
+        feed_start.remove(query)
+
+        poll = self.db.table("poll")
+        poll.remove(query)
+
+    def delete_feed_entry(self, feed_entry: FeedEntry) -> None:
+        entry_contents = self.db.table("entry_contents")
+        query = Query().id.matches(feed_entry.id)
+        entry_contents.remove(query)
+
+        entries = self.db.table("entries")
+        entries.remove(query)
