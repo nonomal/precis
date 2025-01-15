@@ -4,11 +4,11 @@ from typing import ClassVar
 from openai import OpenAI
 from pydantic import BaseModel
 
-from app.handlers import SummarizationHandler
+from app.handlers import LLMHandler
 from app.models import Feed, FeedEntry
 
 
-class OpenAISummarizationHandler(SummarizationHandler, BaseModel):
+class OpenAILLMHandler(LLMHandler, BaseModel):
     api_key: str = environ.get("OPENAI_API_KEY")
     model: str = "gpt-4o-mini"
 
@@ -19,8 +19,8 @@ class OpenAISummarizationHandler(SummarizationHandler, BaseModel):
 
         completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self.get_prompt(mk=mk)},
+                {"role": "system", "content": self.summarization_system_prompt},
+                {"role": "user", "content": self.get_summarization_prompt(mk=mk)},
             ],
             model=self.model,
             n=1,

@@ -3,12 +3,14 @@
 Precis (properly Précis, pronounced "pray-see") is a extensibility-oriented RSS reader that can use LLMs to summarize and synthesize information from numerous different sources, with an emphasis on timely delivery of information via notifications.
 
 The following components of the app are extensible:
-1. Summarization - LLMs including Ollama and OpenAI
+1. LLMs - LLMs including Ollama and OpenAI, used for functions such as summarization
 2. Content Retrieval - `requests` or `playwright`
 3. Notification - `matrix`, `slack`, `jira`, and `ntfy`
-4. Storage - At this time, we support two reasonable embedded DBs - `tinydb` or `lmdb` - defaults to `tinydb`. You can add support for your database of choice if you can implement about 20 shared transactions.
+4. Storage - At this time, we support two reasonable embedded DBs - `tinydb` or `lmdb` - defaults to `tinydb`. We also support a `hybrid` storage handler that uses LDMB for most things, but stores entry content offline, in the filesystem, as pickled objects (which helps to keep the database size manageable). You can add support for your database of choice if you can implement about 20 shared transactions.
 
-The Summarization and Notification handlers also support a `null` handler that does nothing. Good for testing or if you don't care about notifications and summaries. The null handler is the default.
+For production use, I recommend the `hybrid` storage handler.
+
+The LLM and Notification handlers also support a `null` handler that does nothing. Good for testing or if you don't care about notifications and summaries. The null handler is the default.
 
 Precis also supports themes.
 
@@ -43,11 +45,26 @@ Feel free to edit the [docker-compose.yml](docker-compose.yml) as needed to fit 
 - Node 20 or higher (use nvm)
 
 ## Development Instructions
-To install, create a fresh venv and then:
+### Application
+To install the RSS application, create a fresh venv and then:
 ```bash
 make dev
 ```
 Then to develop, in one terminal start tailwind by doing `make tw`. Then, in other start the main app by doing `make run`.
+
+If you use `nix` or `nixos`, do `nix develop` to assumme a dev shell and then follow the install instructions above (including creating and activating the venv).
+
+### Unit Tests
+Precis has unit tests written against `pytest`. They are automated to run during the pull request pipeline, but you can also run them locally.
+
+Simply do `make unit-test` to run unit tests.
+
+### Integration Tests
+Precis has integration tests that are written in Go. They are automated to run during the pull request pipeline, but they also be run locally.
+
+First, install the version of Go specified in `go.mod`. I recommend to use a Golang version manager such as `gvm` or `g`.
+
+Then, start the application using `make run`. Finally, run the integration tests with `make integration-test`.
 
 # Features
 ## OPML Import/Export
@@ -86,6 +103,7 @@ Options:
 
 Commands:
   backup         Write a json-format backup of the current Precis state...
+  check-feeds    Check for new entries in the configured feeds
   export-opml    Write a opml-format list of the feeds configured in...
   import-opml    Import an opml-formatted feed list into Precis
   load-feeds     Load feeds from a YML-formatted feeds.yml file in the...
@@ -94,14 +112,23 @@ Commands:
   restore        Restore a json-format backup of the Precis state
 ```
 
-## UI Tour
+# Content Ownership
+Precis is meant for use as a personal RSS reader. The content retrieval methodology is basic at best, and I do not have much interest in refining it. So, I think it is unlikely that Precis will become a nuisance content scraper.
+
+Furthermore, we pass a unique user agent of the form `Precis/{version}` so if as a content owner you feel that Precis is acting disruptively, feel free to block that user agent. It will not have destructive impact on users; Precis should detect the rejection and display a link to your website instead of its content.
+
+Finally:
+1. If you'd like to opt-out of content retrieval by Precis, [this file](https://github.com/leozqin/precis/blob/main/app/constants.py) contains a set of globs that should return as banned. Feel free to send a PR with your site, but I reserve final say as to whether your request will be accepted. Expect a more understanding and lenient decision making process for small, independent media/publishers.
+2. If you're of the opinion that Precis should respect `robots.txt`, please thumbs up [this issue](https://github.com/leozqin/precis/issues/79)
+
+# UI Tour
 After initial onboarding, you'll be brought to the feeds page.
 ![The feeds page](app/assets/feeds.png)
 
 You can then view the feed entries for each feed.
 ![The feed entries page](app/assets/feed_entries.png)
 
-When you read a feed entry you'll get the full text of the article, as well a summary if you have a summarization handler configured.
+When you read a feed entry you'll get the full text of the article, as well as a summary if you have a LLM handler configured.
 ![The read page](app/assets/read.png)
 
 Global settings can be configured in the UI

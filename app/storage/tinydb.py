@@ -5,13 +5,10 @@ from typing import List, Mapping, Optional, Type
 from tinydb import Query, TinyDB
 
 from app.constants import DATA_DIR
-from app.context import GlobalSettings, StorageHandler
-from app.handlers import (
-    ContentRetrievalHandler,
-    NotificationHandler,
-    SummarizationHandler,
-)
+from app.db import StorageHandler
+from app.handlers import ContentRetrievalHandler, LLMHandler, NotificationHandler
 from app.models import EntryContent, Feed, FeedEntry
+from app.settings import GlobalSettings
 
 logger = getLogger("uvicorn.error")
 
@@ -21,8 +18,12 @@ class TinyDBStorageHandler(StorageHandler):
     Use this class to encapsulate DB interactions
     """
 
-    db_path = Path(DATA_DIR, "db.json").resolve()
-    db = TinyDB(db_path)
+    def __init__(self):
+        super().__init__()
+
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        db_path = Path(DATA_DIR, "db.json").resolve()
+        self.db = TinyDB(db_path)
 
     def clear_active_feeds(self) -> None:
         self.db.drop_table("feeds")
@@ -98,7 +99,7 @@ class TinyDBStorageHandler(StorageHandler):
         query = Query().id.matches(entry.id)
         table.upsert(row, cond=query)
 
-    def get_entries(self, feed: Feed = None):
+    def get_entries(self, feed: Feed = None, after: int = 0):
         table = self.db.table("entries")
 
         if feed:
@@ -110,6 +111,7 @@ class TinyDBStorageHandler(StorageHandler):
         return [
             {"entry": FeedEntry(**i["entry"]), "feed_id": i["feed_id"], "id": i["id"]}
             for i in entries
+            if i["entry"]["published_at"] > after
         ]
 
     def get_feed_entry(self, id: str):
@@ -129,40 +131,19 @@ class TinyDBStorageHandler(StorageHandler):
         else:
             return False
 
-    async def get_entry_content(
-        self, entry: FeedEntry, redrive: bool = False
-    ) -> EntryContent:
+    def retrieve_entry_content(self, entry: FeedEntry) -> EntryContent:
         table = self.db.table("entry_contents")
         query = Query().id.matches(entry.id)
+        existing = table.search(query)[0]
 
+        return EntryContent(**existing["entry_contents"])
+
+    def entry_content_exists(self, entry: FeedEntry) -> bool:
+        table = self.db.table("entry_contents")
+        query = Query().id.matches(entry.id)
         existing = table.search(query)
-        if existing and not redrive:
-            return EntryContent(**existing[0]["entry_contents"])
 
-        else:
-            if redrive:
-                self.logger.info(f"starting redrive for feed entry {entry.id}")
-
-            settings = self.get_settings()
-
-            raw_content = await self.get_entry_html(entry.url, settings=settings)
-            content = self.get_main_content(content=raw_content)
-
-            feed = self.get_feed(entry.feed_id)
-
-            summary = self.summarize(
-                feed=feed, entry=entry, mk=content, settings=settings
-            )
-
-            entry_content = EntryContent(
-                url=entry.url,
-                content=content,
-                summary=summary if summary else None,
-            )
-
-            await self.upsert_entry_content(content=entry_content)
-
-            return entry_content
+        return bool(existing)
 
     async def upsert_entry_content(self, content: EntryContent):
         table = self.db.table("entry_contents")
@@ -175,9 +156,7 @@ class TinyDBStorageHandler(StorageHandler):
 
     def upsert_handler(
         self,
-        handler: Type[
-            SummarizationHandler | NotificationHandler | ContentRetrievalHandler
-        ],
+        handler: Type[LLMHandler | NotificationHandler | ContentRetrievalHandler],
     ) -> None:
         table = self.db.table("handler")
 
@@ -190,14 +169,11 @@ class TinyDBStorageHandler(StorageHandler):
         table.upsert(row, cond=query)
 
     def _make_handler_obj(self, id: str, config: Mapping):
-
         return self.handler_map[id](**config)
 
     def get_handlers(
         self,
-    ) -> Mapping[
-        str, Type[SummarizationHandler | NotificationHandler | ContentRetrievalHandler]
-    ]:
+    ) -> Mapping[str, Type[LLMHandler | NotificationHandler | ContentRetrievalHandler]]:
         table = self.db.table("handler")
 
         handlers = {i: None for i in self.handler_map.keys()}
@@ -211,7 +187,7 @@ class TinyDBStorageHandler(StorageHandler):
 
     def get_handler(
         self, id: str
-    ) -> Type[SummarizationHandler | NotificationHandler | ContentRetrievalHandler]:
+    ) -> Type[LLMHandler | NotificationHandler | ContentRetrievalHandler]:
         table = self.db.table("handler")
         logger.info(f"requested handler {id}")
         query = Query().id.matches(id)
@@ -245,5 +221,24 @@ class TinyDBStorageHandler(StorageHandler):
         table.upsert(row, cond=query)
 
         self.upsert_handler(settings.notification_handler)
-        self.upsert_handler(settings.summarization_handler)
+        self.upsert_handler(settings.llm_handler)
         self.upsert_handler(settings.content_retrieval_handler)
+
+    def delete_feed(self, feed: Feed) -> None:
+        feeds = self.db.table("feeds")
+        query = Query().id.matches(feed.id)
+        feeds.remove(query)
+
+        feed_start = self.db.table("feed_start")
+        feed_start.remove(query)
+
+        poll = self.db.table("poll")
+        poll.remove(query)
+
+    def delete_feed_entry(self, feed_entry: FeedEntry) -> None:
+        entry_contents = self.db.table("entry_contents")
+        query = Query().id.matches(feed_entry.id)
+        entry_contents.remove(query)
+
+        entries = self.db.table("entries")
+        entries.remove(query)

@@ -14,6 +14,8 @@ class Feed(BaseModel):
     notify: bool = True
     preview_only: bool = False
     refresh_enabled: bool = True
+    use_script: bool = False
+    retrieve_content: bool = True
 
     @property
     def rss(self) -> Type[FeedParserDict]:
@@ -24,7 +26,10 @@ class Feed(BaseModel):
         return md5(self.url.encode()).hexdigest()
 
     def validate(self):
-        return bool(self.rss.entries)
+        try:
+            return bool(self.rss.entries)
+        except Exception:
+            return False
 
 
 class FeedEntry(BaseModel):
@@ -33,6 +38,7 @@ class FeedEntry(BaseModel):
     url: str
     published_at: int
     updated_at: int
+    content: str = None
     authors: list[str] = []
     preview: str = None
 
@@ -45,6 +51,8 @@ class EntryContent(BaseModel):
     url: str
     content: str = None
     summary: str = None
+    unretrievable: bool = False
+    banned: bool = False
 
     @property
     def id(self) -> str:
@@ -52,5 +60,4 @@ class EntryContent(BaseModel):
 
 
 class HealthCheck(BaseModel):
-
     status: str = "OK"

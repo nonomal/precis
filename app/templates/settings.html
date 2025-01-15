@@ -34,6 +34,11 @@
               </a>
             </li>
             <li>
+              <a href="{{ url_for('list_recent_feed_entries') }}" class="text-4xl lg:text-xl text-nowrap no-underline">
+                Recent Feed Entries
+              </a>
+            </li>
+            <li>
               <a href="{{ url_for('root') }}" class="text-4xl lg:text-xl text-nowrap no-underline">
                 Return to All Feeds
               </a>
@@ -99,10 +104,10 @@
           </select>
         </label>
         <label class="label flex items-center gap-2 text-2xl lg:text-xl">
-          Summarization Handler
-          <select name="summarization" class="select select-bordered w-full max-w-xs my-5 text-2xl lg:text-xl">
-            {% for choice in summarization_handler_choices %}
-            <option {% if choice==settings.summarization_handler_key %} selected {% endif %}
+          LLM Handler
+          <select name="llm" class="select select-bordered w-full max-w-xs my-5 text-2xl lg:text-xl">
+            {% for choice in llm_handler_choices %}
+            <option {% if choice==settings.llm_handler_key %} selected {% endif %}
               class="text-2xl lg:text-xl">
               {{ choice }}
             </option>
@@ -114,6 +119,12 @@
           <input type="number" placeholder="How many words per minute?"
             class="input input-bordered w-full max-w-xs text-2xl lg:text-xl" value="{{ settings.reading_speed}}"
             name="reading_speed">
+        </label>
+        <label class="label flex items-center gap-2 text-2xl lg:text-xl">
+          Hours for Recent
+          <input type="number" placeholder="How many hours to look back for recent?"
+            class="input input-bordered w-full max-w-xs text-2xl lg:text-xl" value="{{ settings.recent_hours}}"
+            name="recent_hours">
         </label>
       </div>
       <div class=" w-1/2 md:w-1/5 mx-auto flex justify-center my-5">

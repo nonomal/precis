@@ -3,11 +3,11 @@ from typing import Any, ClassVar, Mapping
 from ollama import ChatResponse, Client, Message, Options
 from pydantic import BaseModel
 
-from app.handlers import SummarizationHandler
+from app.handlers import LLMHandler
 from app.models import Feed, FeedEntry
 
 
-class OllamaSummarizationHandler(SummarizationHandler, BaseModel):
+class OllamaLLMHandler(LLMHandler, BaseModel):
     base_url: str
     model: str
     system: str = None
@@ -29,6 +29,8 @@ class OllamaSummarizationHandler(SummarizationHandler, BaseModel):
         return chat["message"]["content"]
 
     def summarize(self, feed: Feed, entry: FeedEntry, mk: str):
-        system = self.system if self.system else self.system_prompt
+        system = self.system if self.system else self.summarization_system_prompt
 
-        return self._make_chat_call(system=system, prompt=self.get_prompt(mk))
+        return self._make_chat_call(
+            system=system, prompt=self.get_summarization_prompt(mk)
+        )

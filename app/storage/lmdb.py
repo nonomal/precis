@@ -1,16 +1,19 @@
+from __future__ import annotations
+
 from enum import Enum
 from json import JSONDecodeError, dumps, loads
 from logging import getLogger
 from pathlib import Path
-from typing import Any, List, Mapping, Type
+from typing import Any, List, Mapping
 
-from lmdb import Environment, Transaction
+from lmdb import Environment
 from pydantic import BaseModel
 
 from app.constants import DATA_DIR
-from app.context import GlobalSettings, StorageHandler
+from app.db import StorageHandler
 from app.handlers import HandlerBase
-from app.models import EntryContent, Feed, FeedEntry, Type
+from app.models import EntryContent, Feed, FeedEntry
+from app.settings import GlobalSettings
 
 logger = getLogger("uvicorn.error")
 
@@ -147,7 +150,9 @@ class LMDBStorageHandler(StorageHandler):
 
             txn.replace(self._serialize(feed.id), self._serialize(entries))
 
-    def get_entries(self, feed: Feed = None) -> Mapping[str, FeedEntry | str]:
+    def get_entries(
+        self, feed: Feed = None, after: int = 0
+    ) -> Mapping[str, FeedEntry | str]:
         entries = []
 
         if feed:
@@ -169,13 +174,14 @@ class LMDBStorageHandler(StorageHandler):
         for entry in entries if entries else []:
             k, v = entry
             feed_entry = FeedEntry(**self._deserialize(v))
-            out.append(
-                {
-                    "entry": feed_entry,
-                    "feed_id": feed_entry.feed_id,
-                    "id": self._deserialize(k),
-                }
-            )
+            if feed_entry.published_at > after:
+                out.append(
+                    {
+                        "entry": feed_entry,
+                        "feed_id": feed_entry.feed_id,
+                        "id": self._deserialize(k),
+                    }
+                )
 
         return out
 
@@ -193,43 +199,19 @@ class LMDBStorageHandler(StorageHandler):
 
             return cur.set_key(self._serialize(id))
 
-    async def get_entry_content(
-        self, entry: FeedEntry, redrive: bool = False
-    ) -> EntryContent:
+    def entry_content_exists(self, entry: FeedEntry):
 
         with self.db.begin(db=self._db(Named.entry_content)) as txn:
             cur = txn.cursor()
             exists = cur.set_key(self._serialize(entry.id))
 
-        if exists and not redrive:
-            with self.db.begin(db=self._db(Named.entry_content)) as txn:
-                content = txn.get(self._serialize(entry.id))
+            return exists
+
+    def retrieve_entry_content(self, entry: FeedEntry):
+
+        with self.db.begin(db=self._db(Named.entry_content)) as txn:
+            content = txn.get(self._serialize(entry.id))
             return EntryContent(**self._deserialize(content))
-
-        else:
-            if redrive:
-                self.logger.info(f"starting redrive for feed entry {entry.id}")
-
-            settings = self.get_settings()
-
-            raw_content = await self.get_entry_html(entry.url, settings=settings)
-            content = self.get_main_content(content=raw_content)
-
-            feed = self.get_feed(entry.feed_id)
-
-            summary = self.summarize(
-                feed=feed, entry=entry, mk=content, settings=settings
-            )
-
-            entry_content = EntryContent(
-                url=entry.url,
-                content=content,
-                summary=summary if summary else None,
-            )
-
-            await self.upsert_entry_content(entry_content)
-
-            return entry_content
 
     async def upsert_entry_content(self, content: EntryContent):
 
@@ -301,5 +283,39 @@ class LMDBStorageHandler(StorageHandler):
             )
 
         self.upsert_handler(settings.notification_handler)
-        self.upsert_handler(settings.summarization_handler)
+        self.upsert_handler(settings.llm_handler)
         self.upsert_handler(settings.content_retrieval_handler)
+
+    def delete_feed(self, feed: Feed) -> None:
+
+        with self.db.begin(db=self._db(Named.feed), write=True) as txn:
+            txn.delete(self._serialize(feed.id))
+
+        with self.db.begin(db=self._db(Named.si_feed_entry), write=True) as txn:
+            txn.delete(self._serialize(feed.id))
+
+        with self.db.begin(db=self._db(Named.poll), write=True) as txn:
+            txn.delete(self._serialize(feed.id))
+
+        with self.db.begin(db=self._db(Named.feed_start), write=True) as txn:
+            txn.delete(self._serialize(feed.id))
+
+    def delete_entry_content(self, entry: FeedEntry) -> None:
+
+        with self.db.begin(db=self._db(Named.entry_content), write=True) as txn:
+            txn.delete(self._serialize(entry.id))
+
+    def delete_feed_entry(self, feed_entry: FeedEntry) -> None:
+
+        self.delete_entry_content(feed_entry)
+
+        with self.db.begin(db=self._db(Named.entry), write=True) as txn:
+            txn.delete(self._serialize(feed_entry.id))
+
+        with self.db.begin(db=self._db(Named.si_feed_entry), write=True) as txn:
+            value = txn.get(self._serialize(feed_entry.feed_id))
+
+            entries: List[str] = self._deserialize(value)
+            entries.remove(feed_entry.id)
+
+            txn.replace(self._serialize(feed_entry.feed_id), self._serialize(entries))
